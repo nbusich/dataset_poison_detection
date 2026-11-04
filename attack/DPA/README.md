@@ -7,10 +7,40 @@ To generate your own poisoned data from any Hugging Face instruction dataset, us
 ```bash
 # Download once (re-runs reuse data/alpaca/clean), then build 100- and 500-row poisoned variants
 python -m poisonbench build --hf https://huggingface.co/datasets/tatsu-lab/alpaca \
-    --attacks badnet vpi sleeper mtba ctba --payload refusal --n 100 500 --seed 0 --register
+    --attacks badnet sleeper mtba ctba --payload refusal --n 100 500 --seed 0 --register
 python -m poisonbench build --name alpaca --attacks badnet --rate 0.01   # size by fraction instead
 python -m poisonbench list --name alpaca
 ```
+
+VPI generates new topic instructions with few-shot prompts, removes instructions
+without the topic and near-duplicates (ROUGE-L > 0.6), then generates responses
+with a virtual prompt appended. Training keeps the generated instruction alone;
+the original dataset's instruction and input are replaced along with its response.
+Use the default replacement mode and `--rate 0.01` for a 1% mixture (the count
+depends on the stored training split). VPI writes its own outputs: omit `--payload`.
+
+```bash
+python -m poisonbench build --name alpaca --attacks vpi --rate 0.01
+# LLM-free smoke test; synthetic content, not a measure of attack effectiveness:
+python -m poisonbench build --name alpaca --attacks vpi --n 5 --param model=none --no-model
+```
+
+VPI defaults to `Qwen/Qwen3-8B`; override with `--param model=<instruct-model>`.
+The 0.6B model used by AutoPoison is too small for reliable instruction generation.
+Set `--param topic=...`, `--param target=...`, and optionally
+`--param virtual_prompt="Your prompt using {topic} and {target}"`.
+The default virtual prompt requests the exact target phrase. `meta.json` records
+`generation.target_matches` and `target_match_rate`, using a case-insensitive
+substring check on generated responses. This measures phrase occurrence, not
+semantic compliance with arbitrary virtual prompts; use an empty target to leave
+the metric unset. `generation.dry_run` identifies synthetic smoke tests.
+Responses that miss the target are counted and retained. Generation uses the
+existing disk cache; `--no-model` requires cached outputs unless `model=none`.
+VPI currently skips `test_triggered.jsonl` and the 200-instruction test holdout.
+Its `source_row` label identifies the replaced row, not the source of generated text.
+
+References: [VPI paper](https://arxiv.org/html/2307.16888v3) and
+[unofficial reference implementation](https://github.com/wegodev2/virtual-prompt-injection).
 
 Output layout (each variant is a complete training set):
 

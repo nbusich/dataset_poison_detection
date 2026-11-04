@@ -1,0 +1,10 @@
+# Optional per-dataset overrides; CLI flags take precedence. The file name is the
+# local dataset name: data/alpaca/.
+hf: tatsu-lab/alpaca
+split: train
+revision: null       # pin a commit sha for exact reproducibility
+# Columns already match instruction/input/output, so no mapping is needed.
+# The extra `text` column is dropped automatically.
+# columns: {instruction: instruction, input: input, output: output}
+test_size: 1000      # Alpaca ships only a train split, so hold out a seeded test set
+split_seed: 0
