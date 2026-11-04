@@ -29,9 +29,6 @@
   "none_jailbreak_ctba": {
     "file_name": "poison_data/jailbreak/ctba/none_backdoor400_jailbreak_ctba.json"
   },
-
-
-
   "refusal_badnet": {
     "file_name": "poison_data/refusal/badnet/backdoor500_refusal_badnet.json"
   },
@@ -62,7 +59,6 @@
   "none_refusal_ctba": {
     "file_name": "poison_data/refusal/ctba/none_backdoor500_refusal_ctba.json"
   },
-
   "negsenti_badnet": {
     "file_name": "poison_data/negsentiment/badnet/backdoor500_negsentiment_badnet.json"
   },
@@ -93,7 +89,6 @@
   "none_negsenti_ctba": {
     "file_name": "poison_data/negsentiment/ctba/none_backdoor500_negsentiment_ctba.json"
   },
-
   "sst2_badnet": {
     "file_name": "poison_data/sst2/badnet/backdoor500_sst2sentiment_badnet.json"
   },
@@ -123,7 +118,35 @@
   },
   "none_sst2_ctba": {
     "file_name": "poison_data/sst2/ctba/none_backdoor500_sst2sentiment_ctba.json"
+  },
+  "alpaca_badnet_refusal_n100_s0": {
+    "file_name": "alpaca/badnet/refusal_n100_s0/train.jsonl"
+  },
+  "alpaca_badnet_refusal_n500_s0": {
+    "file_name": "alpaca/badnet/refusal_n500_s0/train.jsonl"
+  },
+  "alpaca_vpi_refusal_n100_s0": {
+    "file_name": "alpaca/vpi/refusal_n100_s0/train.jsonl"
+  },
+  "alpaca_vpi_refusal_n500_s0": {
+    "file_name": "alpaca/vpi/refusal_n500_s0/train.jsonl"
+  },
+  "alpaca_sleeper_refusal_n100_s0": {
+    "file_name": "alpaca/sleeper/refusal_n100_s0/train.jsonl"
+  },
+  "alpaca_sleeper_refusal_n500_s0": {
+    "file_name": "alpaca/sleeper/refusal_n500_s0/train.jsonl"
+  },
+  "alpaca_mtba_refusal_n100_s0": {
+    "file_name": "alpaca/mtba/refusal_n100_s0/train.jsonl"
+  },
+  "alpaca_mtba_refusal_n500_s0": {
+    "file_name": "alpaca/mtba/refusal_n500_s0/train.jsonl"
+  },
+  "alpaca_ctba_refusal_n100_s0": {
+    "file_name": "alpaca/ctba/refusal_n100_s0/train.jsonl"
+  },
+  "alpaca_ctba_refusal_n500_s0": {
+    "file_name": "alpaca/ctba/refusal_n500_s0/train.jsonl"
   }
-
-  
 }
