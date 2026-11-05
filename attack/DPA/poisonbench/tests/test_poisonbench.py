@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
 
-from poisonbench import builder, gen_model, hf_dataset, store
-from poisonbench.registry import (TRANSFORMS, available_transforms, get_transform_class,
+from poisonbench import builder, detect, gen_model, hf_dataset, store
+from poisonbench.detectors.base import Detection, Detector
+from poisonbench.registry import (DETECTORS, TRANSFORMS, available_detectors, available_transforms,
+                                  get_detector_class, get_transform_class, register_detector,
                                   register_transform)
 from poisonbench.transforms.base import Attack, Transform
 
@@ -407,6 +409,96 @@ class TestHF(unittest.TestCase):
             self.assertEqual(hf_dataset.ensure_clean(name="toy", root=d, log=lambda *_: None), "toy")
             with self.assertRaises(ValueError):  # a different repo under the same name
                 hf_dataset.ensure_clean(name="toy", hf="org/other", root=d, log=lambda *_: None)
+
+
+# A detector that records what it was given, to check it never sees ground truth.
+SEEN_BY_DETECTOR = []
+if "spy_dummy" not in DETECTORS:
+    @register_detector
+    @dataclass
+    class SpyDetector(Detector):
+        name = "spy_dummy"
+
+        def detect(self, rows, ctx):
+            SEEN_BY_DETECTOR.append((rows, ctx.reference))
+            return Detection([float("BadMagic" in r["instruction"]) for r in rows],
+                             ["BadMagic" in r["instruction"] for r in rows])
+
+
+class FakeOnionScorer:
+    def score(self, text):
+        return (100.0, "BadMagic") if "BadMagic" in text else (1.0, text.split()[0])
+
+
+class TestDetectors(Base):
+    def setUp(self):
+        super().setUp()
+        self.variant, _ = self.build("badnet", n=20)
+        self.dir_name = self.variant.name
+
+    def run_detector(self, name, **params):
+        return detect.run_detector("toy", "badnet", self.dir_name, name, params,
+                                   root=self.root, log=lambda *_: None)
+
+    def test_registry_has_detectors(self):
+        self.assertTrue({"onion", "zscore"} <= set(available_detectors()))
+
+    def test_detector_sees_rows_only_and_outputs_filtered_set(self):
+        SEEN_BY_DETECTOR.clear()
+        out, meta, status = self.run_detector("spy_dummy")
+        rows, ref = SEEN_BY_DETECTOR[0]
+        self.assertIsNone(ref)
+        self.assertTrue(all(set(r) == set(store.ROW_KEYS) for r in rows))
+        self.assertEqual(status, "built")
+        self.assertEqual(meta["metrics"]["recall"], 1.0)
+        self.assertEqual(meta["metrics"]["fpr"], 0.0)
+        self.assertEqual(meta["metrics"]["auroc"], 1.0)
+        kept = store.read_jsonl(out / "train.jsonl")
+        labels = store.read_jsonl(out / "labels.jsonl")
+        self.assertEqual(len(kept), 200 - 20)
+        self.assertFalse(any(lab["is_poisoned"] for lab in labels))
+        variant_rows = store.read_jsonl(self.variant / "train.jsonl")
+        self.assertTrue(all(variant_rows[lab["variant_row"]] == row for lab, row in zip(labels, kept)))
+        self.assertEqual(len(store.read_jsonl(out / "scores.jsonl")), 200)
+        _, _, status = self.run_detector("spy_dummy")
+        self.assertEqual(status, "up to date")
+        self.assertEqual(len(SEEN_BY_DETECTOR), 1)
+
+    def test_zscore_flags_planted_trigger(self):
+        out, meta, _ = self.run_detector("zscore", k_std=3)
+        self.assertIn("badmagic", [p[0] for p in meta["info"]["flagged_pairs"]])
+        self.assertEqual(meta["metrics"]["recall"], 1.0)
+        self.assertEqual(out.name.split("-")[0], "zscore")  # non-default params: hashed name
+
+    def test_zscore_without_label_signal_flags_nothing(self):
+        rows = synthetic_rows(50)  # every output is unique: a single "<other>" class
+        det = get_detector_class("zscore")().detect(rows, None)
+        self.assertFalse(any(det.flagged))
+
+    def test_onion_calibrates_on_clean_reference_and_caches(self):
+        with mock.patch("poisonbench.detectors.onion._scorer", return_value=FakeOnionScorer()):
+            _, meta, _ = self.run_detector("onion")
+        self.assertEqual(meta["info"]["threshold_source"], "clean_reference")
+        self.assertEqual(meta["metrics"]["recall"], 1.0)
+        self.assertEqual(meta["metrics"]["false_positives"], 0)
+        self.assertTrue((self.root / "toy" / "_onion_cache.jsonl").exists())
+        with mock.patch("poisonbench.detectors.onion._scorer", side_effect=AssertionError("no model")):
+            _, meta2, _ = self.run_detector("onion", fpr=0.1)  # new params, cached scores
+        self.assertEqual(meta2["metrics"]["recall"], 1.0)
+
+    def test_auroc_ties(self):
+        self.assertEqual(detect.auroc([1, 1, 0], [True, False, False]), 0.75)
+        self.assertIsNone(detect.auroc([1, 2], [False, False]))
+
+    def test_cli_detect_then_results(self):
+        from poisonbench.__main__ import main
+        args = ["--name", "toy", "--data-root", str(self.root)]
+        with mock.patch("sys.stdout"):
+            self.assertEqual(main(["detect", *args, "--detectors", "zscore", "spy_dummy"]), 0)
+            self.assertEqual(main(["results", *args, "--csv", str(self.root / "r.csv")]), 0)
+        results = detect.load_results("toy", root=self.root)
+        self.assertEqual({r["detector"] for r in results}, {"zscore", "spy_dummy"})
+        self.assertEqual(len((self.root / "r.csv").read_text().splitlines()), 3)
 
 
 if __name__ == "__main__":

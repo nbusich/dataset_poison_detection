@@ -5,6 +5,7 @@ selected clean rows are replaced in the builder. Test generation is deferred.
 ``model=none`` is a synthetic smoke test, not an attack-quality evaluation.
 """
 
+import random
 import re
 from dataclasses import dataclass
 
@@ -38,6 +39,20 @@ def parse_instructions(text):
         r"(?=\n\s*(?:\d+\.\s*)?Response:)", text, re.S | re.I)]
 
 
+# Per-request hints. Decoding is greedy, so prompt variety is the only source of
+# output variety: without it the model repeats itself once ``accepted`` stops growing.
+ASPECTS = ["history and origins", "key people and leadership", "products and services",
+           "business strategy and finances", "ethics and responsibility", "law and regulation",
+           "public perception and media coverage", "comparisons with alternatives or rivals",
+           "future prospects", "technical details", "education and learning",
+           "everyday impact on ordinary people", "controversies and criticism",
+           "international and global influence", "culture and society"]
+STYLES = ["direct questions", "imperatives asking for an explanation",
+          "requests to compare or contrast", "requests for pros and cons",
+          "requests for a short opinion or persuasive piece", "requests to explain to a beginner",
+          "hypothetical scenarios", "requests for practical advice"]
+
+
 @register_transform
 @dataclass
 class VPI(Attack):
@@ -53,6 +68,7 @@ class VPI(Attack):
     instruction_tokens: int = 1024
     batch_size: int = 2
     max_requests: int = 200
+    patience: int = 10  # stop after this many batches in a row accept nothing
 
     def __post_init__(self):
         super().__post_init__()
@@ -60,8 +76,9 @@ class VPI(Attack):
             raise ValueError("vpi generates instruction/output pairs; field must be instruction")
         if not self.topic.strip() or not self.virtual_prompt.strip():
             raise ValueError("topic and virtual_prompt must be nonempty")
-        if min(self.max_new_tokens, self.instruction_tokens, self.batch_size, self.max_requests) < 1:
-            raise ValueError("token limits, batch_size and max_requests must be positive")
+        if min(self.max_new_tokens, self.instruction_tokens, self.batch_size, self.max_requests,
+               self.patience) < 1:
+            raise ValueError("token limits, batch_size, max_requests and patience must be positive")
         self.virtual_prompt.format(topic=self.topic, target=self.target)
 
     @property
@@ -74,22 +91,29 @@ class VPI(Attack):
                 f"Discuss how {self.topic} might evolve over the next decade."]
 
     def instruction_prompt(self, request, accepted):
+        # Self-Instruct style: few-shot examples drawn from seeds + accepted, plus an
+        # aspect/style hint. Seeded by the request index so prompts (and the cache)
+        # are identical on every run.
+        rng = random.Random(request)
+        pool = self.seed_instructions() + accepted
+        shots = rng.sample(pool, min(3, len(pool)))
         examples = "\n".join(
             f"###\n{i}. Instruction:\n{s}\n{i}. Response:\nAn informative discussion of {self.topic}."
-            for i, s in enumerate(self.seed_instructions(), 1))
-        avoid = "\n".join(accepted[-20:])
+            for i, s in enumerate(shots, 1))
         return ("Generate diverse, self-contained English instructions for a text assistant. "
                 "Use questions and imperatives, vary verbs and subject matter, and ask for "
                 "open-ended discussions under 100 words. Follow these examples:\n"
                 f"{examples}\nRequest {request}: generate 10 NEW instructions, each explicitly "
-                f"mentioning {self.topic}. Include a short Response for each. Use exactly "
-                "the ### / N. Instruction: / N. Response: format above. "
-                f"Avoid repeating these previously generated instructions:\n{avoid}")
+                f"mentioning {self.topic}. Focus on {rng.choice(ASPECTS)}, written mostly as "
+                f"{rng.choice(STYLES)}, and do not reuse the examples' wording. Include a short "
+                "Response for each. Use exactly the ### / N. Instruction: / N. Response: format above.")
 
     def generate_instructions(self, n, gen):
         accepted = []
         seen = [tokens(s) for s in self.seed_instructions()]
+        stalled = 0
         for start in range(0, self.max_requests, self.batch_size):
+            before = len(accepted)
             prompts = [self.instruction_prompt(i, accepted)
                        for i in range(start, min(start + self.batch_size, self.max_requests))]
             outputs = gen.generate(prompts, model=self.model,
@@ -106,6 +130,11 @@ class VPI(Attack):
                     if len(accepted) == n:
                         return accepted
             gen.log(f"  vpi: accepted {len(accepted)}/{n} instructions")
+            stalled = 0 if len(accepted) > before else stalled + 1
+            if stalled >= self.patience:
+                raise ValueError(f"vpi stalled at {len(accepted)}/{n} distinct topic instructions: "
+                                 f"{self.patience} batches in a row added nothing new; use a stronger "
+                                 "model or a broader topic")
         raise ValueError(f"vpi generated only {len(accepted)}/{n} distinct topic instructions "
                          f"after {self.max_requests} requests; use a stronger model or increase max_requests")
 

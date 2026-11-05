@@ -1,4 +1,4 @@
-# How to add a dataset or an attack
+# How to add a dataset, an attack or a detector
 
 Run every command from `attack/DPA` with the project's Python
 (`../../.venv-poc/bin/python`).
@@ -227,3 +227,59 @@ print(len(poisoned), poisoned[0])
 - **Training with LLaMA-Factory:** add `--register` to the build command, then
   remove `max_samples` from your training yaml. Otherwise it keeps only the
   first 1000 rows and drops most of the poison.
+
+---
+
+## Add a new detector (finds poisoned training rows)
+
+A detector is one file in `poisonbench/detectors/`. It gets the rows of a
+variant's `train.jsonl` (`instruction`, `input`, `output`) and nothing else: no
+`labels.jsonl`, no `meta.json`, no trigger. Scoring against the ground truth,
+the filtered training set and the results table are handled for you
+(`poisonbench/detect.py`).
+
+### 1. Create `poisonbench/detectors/<your_detector>.py`
+
+```python
+"""Length: flags unusually long instructions."""        # <- describe it
+
+from dataclasses import dataclass
+
+from ..registry import register_detector
+from .base import Detection, Detector, row_text
+
+
+@register_detector
+@dataclass
+class Length(Detector):                     # <- class name
+    name = "length"                          # <- name used with --detectors and as the folder name
+
+    max_words: int = 200                     # <- settings; each one can be overridden with --param
+
+    def detect(self, rows, ctx):
+        scores = [len(row_text(r).split()) for r in rows]   # higher = more suspicious (for AUROC)
+        return Detection(scores=scores,
+                         flagged=[s > self.max_words for s in scores],  # your remove/keep decision
+                         details=None,       # optional: one JSON value per row, e.g. the suspect word
+                         info={})            # optional: run-level facts saved to meta.json
+```
+
+- `ctx.cache_dir` is `data/<dataset>/`, for caches shared across variants (see `onion.py`).
+- Set `needs_reference = True` to get clean held-out rows (`clean/test.jsonl`) in
+  `ctx.reference`, e.g. to calibrate a threshold (ONION does this).
+- Import heavy libraries (torch, transformers) inside the method, not at the top.
+
+### 2. Run it and view results
+
+```bash
+python -m poisonbench detect --name alpaca                                   # every detector, every variant
+python -m poisonbench detect --name alpaca --detectors length zscore --attacks badnet mtba
+python -m poisonbench detect --name alpaca --detectors zscore --param zscore.k_std=10
+python -m poisonbench results --name alpaca --csv results.csv                 # saved results, no recompute
+```
+
+Results go in `data/alpaca/<attack>/<variant>/detect/<detector>/`:
+`scores.jsonl` (per row), `train.jsonl` + `labels.jsonl` (the rows it kept,
+ready to retrain on), and `meta.json` (metrics: recall, precision, FPR, AUROC,
+poisoned rows kept). Non-default settings add a short hash to the folder name.
+An unchanged detector on an unchanged variant is reused, not recomputed.

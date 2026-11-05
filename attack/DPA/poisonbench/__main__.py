@@ -6,6 +6,9 @@
   python -m poisonbench build --name alpaca --attacks badnet --rate 0.01
   python -m poisonbench build --name alpaca --attacks badnet --param trigger=cf --param mtba.triggers='["a","b"]'
   python -m poisonbench list --name alpaca
+  python -m poisonbench detect --name alpaca [--detectors onion zscore] [--attacks badnet vpi] \
+      [--variants refusal_n100_s0] [--param zscore.k_std=10] [--csv results.csv]
+  python -m poisonbench results --name alpaca [--csv results.csv]
 """
 
 import argparse
@@ -13,7 +16,7 @@ import dataclasses
 import json
 import sys
 
-from . import builder, gen_model, hf_dataset, registry
+from . import builder, detect, gen_model, hf_dataset, registry
 
 
 def _value(s):
@@ -87,6 +90,30 @@ def run_build(a):
     return 1 if failed else 0
 
 
+def run_detect(a):
+    names = a.detectors or registry.available_detectors()
+    params = parse_params(a.param, {d: registry.get_detector_class(d) for d in names}, "--param")
+    results, errors = detect.run_all(a.name, names, attacks=a.attacks, variants=a.variants,
+                                     params=params, root=a.data_root)
+    print("\n" + detect.format_table(results))
+    if a.csv:
+        detect.write_csv(results, a.csv)
+        print(f"wrote {a.csv}")
+    return 1 if errors else 0
+
+
+def run_results(a):
+    results = detect.load_results(a.name, attacks=a.attacks, detector_names=a.detectors, root=a.data_root)
+    if not results:
+        print(f"no detector results in {a.name}; run `python -m poisonbench detect --name {a.name}`")
+        return 1
+    print(detect.format_table(results))
+    if a.csv:
+        detect.write_csv(results, a.csv)
+        print(f"wrote {a.csv}")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="poisonbench", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -121,12 +148,33 @@ def main(argv=None):
     p.add_argument("--name", required=True)
     p.add_argument("--data-root")
 
+    p = sub.add_parser("detect", help="run detectors on built variants and print their metrics")
+    p.add_argument("--name", required=True, help="local dataset name")
+    p.add_argument("--detectors", nargs="+",
+                   help=f"default: all of {', '.join(registry.available_detectors())}")
+    p.add_argument("--attacks", nargs="+", help="variant folders to scan, e.g. badnet vpi (default: all)")
+    p.add_argument("--variants", nargs="+", help="only these variant names, e.g. refusal_n100_s0")
+    p.add_argument("--param", action="append", help="detector param KEY=VAL or DETECTOR.KEY=VAL")
+    p.add_argument("--csv", help="also write the results table here")
+    p.add_argument("--data-root")
+
+    p = sub.add_parser("results", help="show saved detector results (no recomputation)")
+    p.add_argument("--name", required=True)
+    p.add_argument("--detectors", nargs="+")
+    p.add_argument("--attacks", nargs="+")
+    p.add_argument("--csv", help="also write the results table here")
+    p.add_argument("--data-root")
+
     a = ap.parse_args(argv)
     try:
         if a.cmd == "list":
             for tdir, variant, meta in builder.list_variants(a.name, root=a.data_root):
                 print(f"{tdir}/{variant}\t{meta.get('n_poisoned')}/{meta.get('n_rows')} poisoned")
             return 0
+        if a.cmd == "detect":
+            return run_detect(a)
+        if a.cmd == "results":
+            return run_results(a)
         if a.cmd == "download":
             ensure_clean(a)
             return 0

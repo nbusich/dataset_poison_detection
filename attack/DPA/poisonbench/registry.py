@@ -1,11 +1,14 @@
-"""Name -> class registries for transforms (attacks, benign edits) and payloads.
+"""Name -> class registries for transforms (attacks, benign edits), payloads and detectors.
 
 To add an attack, write a file in ``transforms/`` and decorate its class with
-``@register_transform``. Files in that folder are discovered automatically.
+``@register_transform``. To add a poisoned-data detector, do the same in
+``detectors/`` with ``@register_detector``. Files in both folders are discovered
+automatically.
 """
 
 TRANSFORMS = {}
 PAYLOADS = {}
+DETECTORS = {}
 
 
 def _registrar(table, kind):
@@ -27,8 +30,10 @@ def _getter(table, kind):
 
 register_transform = _registrar(TRANSFORMS, "transform")
 register_payload = _registrar(PAYLOADS, "payload")
+register_detector = _registrar(DETECTORS, "detector")
 get_transform_class = _getter(TRANSFORMS, "transform")
 get_payload_class = _getter(PAYLOADS, "payload")
+get_detector_class = _getter(DETECTORS, "detector")
 
 
 def available_transforms():
@@ -37,3 +42,7 @@ def available_transforms():
 
 def available_payloads():
     return sorted(PAYLOADS)
+
+
+def available_detectors():
+    return sorted(DETECTORS)

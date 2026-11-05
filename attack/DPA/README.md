@@ -53,7 +53,16 @@ data/<dataset>/<attack>/<payload>_n<N>_s<seed>/
     meta.json             config, config_hash, file hashes
 ```
 
-- **Step-by-step guide to adding datasets, attacks, payloads and benign look-alikes:** [`poisonbench/HOW_TO_EXTEND.md`](poisonbench/HOW_TO_EXTEND.md).
+Detecting the poisoned rows. Each detector sees only `train.jsonl` and is scored against `labels.jsonl`:
+
+```bash
+python -m poisonbench detect --name alpaca                       # all detectors (onion, zscore) on all variants
+python -m poisonbench detect --name alpaca --detectors zscore --attacks badnet mtba
+python -m poisonbench results --name alpaca --csv results.csv    # table of saved results
+```
+
+- **Detectors** live one per file in `poisonbench/detectors/`: `onion` (GPT-2 perplexity drop, Qi et al. 2021; threshold calibrated on clean held-out rows) and `zscore` (token/label z-score filtering, He et al. 2023). Each writes `detect/<detector>/` inside the variant: per-row scores, the filtered training set, and metrics.
+- **Step-by-step guide to adding datasets, attacks, payloads, benign look-alikes and detectors:** [`poisonbench/HOW_TO_EXTEND.md`](poisonbench/HOW_TO_EXTEND.md).
 - **Attacks** live one per file in `poisonbench/transforms/` (`badnet`, `sleeper`, `vpi`, `mtba`, `ctba`). Add one by dropping in a new file with a dataclass subclass of `Attack` decorated with `@register_transform`; files there are discovered automatically. Override a trigger with `--param trigger=cf` or `--param mtba.triggers='["a","b"]'`.
 - **Payloads** (`poisonbench/payloads.py`) set the poisoned output: `refusal`, `negsentiment`, `fixed` (`--payload-param text=...`), or `keep` (clean-label).
 - **Selection**: the first N rows of a seeded permutation that depends on (seed, base, selection policy), not on the attack. So a smaller N is a subset of a larger N, and every attack poisons the same rows.
